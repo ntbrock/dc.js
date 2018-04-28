@@ -1,0 +1,1242 @@
+From 91ecc78dfda60b401d7e5f6a2c12804d6c2aa75f Mon Sep 17 00:00:00 2001
+From: xavier <xavier@tttp.eu>
+Date: Thu, 14 May 2015 13:14:16 +0200
+Subject: [PATCH 1/5] Input filter
+
+Add a wordcloud
+
+Add a new input-filter graph
+
+delete cloud for now
+
+clean text, remove dead code
+
+add configuration option for throttle duration and filter
+
+work on tests+update based on input on the PR and ML
+
+remove mandatory group() that isn't used
+
+latest version
+---
+ Gruntfile.js              |   1 +
+ spec/filter-input-spec.js | 105 ++++++++++++++++++++++++++++++++++++++++++++
+ src/filter-input.js       | 109 ++++++++++++++++++++++++++++++++++++++++++++++
+ web/examples/search.html  |  70 +++++++++++++++++++++++++++++
+ 4 files changed, 285 insertions(+)
+ create mode 100644 spec/filter-input-spec.js
+ create mode 100644 src/filter-input.js
+ create mode 100644 web/examples/search.html
+
+diff --git a/Gruntfile.js b/Gruntfile.js
+index 96dd5abf5..747e28b48 100644
+--- a/Gruntfile.js
++++ b/Gruntfile.js
+@@ -517,5 +517,6 @@ module.exports.jsFiles = [
+     'src/d3.box.js',
+     'src/box-plot.js',
+     'src/select-menu.js',
++    'src/filter-input.js',
+     'src/footer.js'  // NOTE: keep this last
+ ];
+diff --git a/spec/filter-input-spec.js b/spec/filter-input-spec.js
+new file mode 100644
+index 000000000..795422f9a
+--- /dev/null
++++ b/spec/filter-input-spec.js
+@@ -0,0 +1,105 @@
++describe('dc.inputFilter', function() {
++
++    var id, chart, data;
++    var dimension, group;
++    var countryDimension;
++
++    beforeEach(function() {
++        dateFixture = loadDateFixture();
++        data = crossfilter(dateFixture);
++        dimension = data.dimension(function(d) {
++            return d.countrycode.toLowerCase()+ " "+ d.state.toLowerCase();
++        });
++        group =  dimension.group().reduceSum(function(d) { return 1; });
++        countryDimension = data.dimension(function(d) {
++            return d.countrycode;
++        });
++
++        id = "input-filter";
++        appendChartID(id);
++        chart = dc.inputFilter("#" + id)
++            .dimension(dimension)
++            .group(group);
++        chart.render();
++    });
++
++    describe('creation', function() {
++        it('generates something', function() {
++            expect(chart).not.toBeNull();
++        });
++        it('registers', function() {
++            expect(dc.hasChart(chart)).toBeTruthy();
++        });
++        it('sets an input field', function() {
++            expect(chart.selectAll("input")[0].length).toEqual(1);
++        });
++        it("doesn't filter by default", function() {
++            expect(chart.dimension().top(1000).length).toEqual(100);
++        });
++    });
++
++    describe('default accessor functions', function() {
++      it('exists for html()', function() {
++        var html = chart.html();
++        expect(typeof html).toBe("function");
++      });
++      it('exists for normalize()', function() {
++        var normalize = chart.normalize();
++        expect(typeof normalize).toBe("function");
++      });
++      it('exists for filterFunction()', function() {
++        var filterFunction = chart.filterFunction();
++        expect(typeof filterFunction).toBe("function");
++      });
++      it('exists for throttleDuration()', function() {
++        var throttleDuration = chart.throttle();
++        expect(typeof throttleDuration).toBe("number");
++        expect(throttleDuration).toBe(200);
++      });
++    });
++
++    describe('change the html search field', function() {
++        it('generates something', function() {
++            expect(chart).not.toBeNull();
++        });
++        it('registers', function() {
++            expect(dc.hasChart(chart)).toBeTruthy();
++        });
++        it('sets an input field', function() {
++            expect(chart.selectAll("input")[0].length).toEqual(1);
++        });
++        it("doesn't filter by default", function() {
++            expect(chart.dimension().top(1000).length).toEqual(100);
++        });
++    });
++
++    describe('filter when typing', function() {
++        var mockTyping = function (q) {
++          i=d3.select("input");
++          i[0][0].value=q;
++          i.on("input").call(i.node(),i.datum());
++        };
++
++        beforeEach(function() {
++            chart.redraw();
++        });
++
++        it("has a mock function that sets the value", function() {
++          mockTyping("42");
++          expect(chart.selectAll("input")[0][0].value),toEqual("42");
++        });
++
++        it(' a letter that exists', function() {
++            mockTyping("C");
++            expect(chart.selectAll("input")[0].length).toEqual(1);
++        });
++
++    });
++
++
++    afterEach(function() {
++        dimension.filterAll();
++    });
++});
++
++
+diff --git a/src/filter-input.js b/src/filter-input.js
+new file mode 100644
+index 000000000..9d2fbe9d8
+--- /dev/null
++++ b/src/filter-input.js
+@@ -0,0 +1,109 @@
++/**
++## input Filter Widget
++Includes: [Base Mixin](#base-mixin)
++
++The input filter data widget is a simple widget designed to display an input field allowing to filter the data
++that matches the text typed. 
++
++As opposed to the other graphs, this doesn't display any result and doesn't update its display, it's just to input an filter other graphs
++
++Examples:
++
++#### dc.inputFilter(parent[, chartGroup])
++Create an input widget and attach it to the given parent element.
++
++Parameters:
++
++* parent : string | node | selection - any valid
++ [d3 single selector](https://github.com/mbostock/d3/wiki/Selections#selecting-elements) specifying
++ a dom block element such as a div; or a dom element or d3 selection.
++* chartGroup : string (optional) - name of the chart group this widget should be placed in.
++
++Returns:
++A newly created input widget instance
++#### .dimension(data) - **mandatory**
++
++```js
++var data=[{"firstname":"John","lastname":"Coltrane"}{"firstname":"Miles",lastname:"Davis"] 
++var ndx = crossfilter(data);
++var dimension = ndx.dimension(function(d) {
++  return d.lastname.toLowerCase() + " "+ d.firstname.toLowerCase();
++});
++
++dc.inputFilter('.search')
++    .dimension(dimension);
++    // you don't need the group() function
++```
++
++**/
++
++dc.inputFilter = function (parent, chartGroup) {
++    var _chart = dc.baseMixin({});
++    var _html = function() {return "<input class='form-control input-lg' placeholder='search'/>"};
++    var _normalize = function (s) { return s.toLowerCase()};
++    var _filterFunction = function(q) { 
++      _chart.dimension().filterFunction(function (d){return d.indexOf (q) !== -1;});
++    };
++    var _throttleDuration=200;
++    var _throttleTimer;
++
++    _chart.group(function (){throw "the group function on inputFilter should never be called, please report the issue"});
++
++    _chart._doRender = function () {
++      _chart.root().html(_html());
++
++      _chart.root().selectAll("input").on("input", function() {
++        _filterFunction(_normalize(this.value));
++        _throttle();
++      });
++      return _chart;
++    };
++
++    function _throttle() {
++      window.clearTimeout(_throttleTimer);
++      _throttleTimer = window.setTimeout(function() {
++          dc.redrawAll();
++      }, _throttleDuration);
++    }
++
++    _chart._doRedraw = function () {
++      return _chart;
++    };
++
++    _chart.html = function (s) {
++        if (!arguments.length) {
++            return _html;
++        }
++        if (typeof s == "string")
++          _html = function (){return s};
++        else
++          _html = s;
++        return _chart;
++    };
++
++    _chart.normalize = function (s) {
++        if (!arguments.length) {
++            return _normalize;
++        }
++        _normalize = s;
++        return _chart;
++    };
++
++    _chart.filterFunction = function (s) {
++        if (!arguments.length) {
++            return _filterFunction;
++        }
++        _filterFunction = s;
++        return _chart;
++    };
++
++    _chart.throttleDuration = function (s) {
++        if (!arguments.length) {
++            return _throttleDuration;
++        }
++        _throttleDuration = s;
++        return _chart;
++    };
++
++    return _chart.anchor(parent, chartGroup);
++};
+diff --git a/web/examples/search.html b/web/examples/search.html
+new file mode 100644
+index 000000000..451bcb6aa
+--- /dev/null
++++ b/web/examples/search.html
+@@ -0,0 +1,70 @@
++<!DOCTYPE html>
++<html lang="en">
++<head>
++    <title>dc.js - filter input Example</title>
++    <meta charset="UTF-8">
++    <link rel="stylesheet" type="text/css" href="../css/dc.css"/>
++</head>
++<body>
++
++<div id="search"></div>
++<div style="clear:both;">
++<table class="table dc-data-grid">
++  <thead>
++    <tr class=header>
++      <th>Nb</th>
++      <th>First Name</th>
++      <th>Last Name</th>
++    </tr>
++  </thead>
++</table>
++</div>
++
++
++<script type="text/javascript" src="../js/d3.js"></script>
++<script type="text/javascript" src="../js/crossfilter.js"></script>
++<script type="text/javascript" src="../js/dc.js"></script>
++<!--script type="text/javascript" src="../../src/filter-input.js"></script-->
++<script type="text/javascript">
++
++
++var data= [
++{"first_name":"John","last_name":"Coltrane"},
++{"first_name":"Miles","last_name":"Davis"},
++{"first_name":"Ornette","last_name":"Coleman"},
++{"first_name":"Louis","last_name":"Armstrong"},
++{"first_name":"Fela","last_name":"Kuti"},
++{"first_name":"Charlie","last_name":"Parker"},
++{"first_name":"Wayne","last_name":"Shorter"},
++{"first_name":"Thelonious","last_name":"Monk"},
++{"first_name":"Herbie","last_name":"Hancock"},
++{"first_name":"Max","last_name":"Roach"},
++];
++  var ndx = crossfilter(data),
++    dimension  = ndx.dimension(function(d) {return d.last_name.toLowerCase() + " "+ d.first_name.toLowerCase();});
++
++  var chart = dc.inputFilter ("#search")
++    .dimension(dimension)
++    .html("<input placeholder='search a musician' />")
++//    .group(function(d){console.log("never called")});
++
++   var i=0;
++   dc.dataTable(".dc-data-grid")
++     .dimension(dimension)
++      .group(function (d) { return "Jazz";})
++      .columns([
++          function(d) { i=i+1; return i; },
++          function(d) {  return d.first_name; },
++          function(d) {  return d.last_name; }])
++      .on("renderlet", function(c){
++         i=0;
++      });
++
++
++  dc.renderAll();
++
++
++</script>
++
++</body>
++</html>
+
+From 7dcfb1ed25ce821d137a7b6db05245ebd3e308ac Mon Sep 17 00:00:00 2001
+From: deepak <deepak@kreatio.com>
+Date: Thu, 29 Mar 2018 12:20:52 +0530
+Subject: [PATCH 2/5] Code cleanup, lint clean
+
+---
+ spec/filter-input-spec.js | 108 ++++++++++++++++++++---------------------
+ src/filter-input.js       | 121 ++++++++++++++++++++++++----------------------
+ 2 files changed, 116 insertions(+), 113 deletions(-)
+
+diff --git a/spec/filter-input-spec.js b/spec/filter-input-spec.js
+index 795422f9a..60020e1ab 100644
+--- a/spec/filter-input-spec.js
++++ b/spec/filter-input-spec.js
+@@ -1,105 +1,105 @@
+-describe('dc.inputFilter', function() {
+-
++/* global loadDateFixture, appendChartID */
++describe('dc.inputFilter', function () {
++    var dateFixture;
+     var id, chart, data;
+     var dimension, group;
+     var countryDimension;
+ 
+-    beforeEach(function() {
++    beforeEach(function () {
+         dateFixture = loadDateFixture();
+         data = crossfilter(dateFixture);
+-        dimension = data.dimension(function(d) {
+-            return d.countrycode.toLowerCase()+ " "+ d.state.toLowerCase();
++        dimension = data.dimension(function (d) {
++            return d.countrycode.toLowerCase() + ' ' + d.state.toLowerCase();
++        });
++        group = dimension.group().reduceSum(function (d) {
++            return 1;
+         });
+-        group =  dimension.group().reduceSum(function(d) { return 1; });
+-        countryDimension = data.dimension(function(d) {
++        countryDimension = data.dimension(function (d) {
+             return d.countrycode;
+         });
+ 
+-        id = "input-filter";
++        id = 'input-filter';
+         appendChartID(id);
+-        chart = dc.inputFilter("#" + id)
++        chart = dc.inputFilter('#' + id)
+             .dimension(dimension)
+             .group(group);
+         chart.render();
+     });
+ 
+-    describe('creation', function() {
+-        it('generates something', function() {
++    describe('creation', function () {
++        it('generates something', function () {
+             expect(chart).not.toBeNull();
+         });
+-        it('registers', function() {
++        it('registers', function () {
+             expect(dc.hasChart(chart)).toBeTruthy();
+         });
+-        it('sets an input field', function() {
+-            expect(chart.selectAll("input")[0].length).toEqual(1);
++        it('sets an input field', function () {
++            expect(chart.selectAll('input').nodes().length).toEqual(1);
+         });
+-        it("doesn't filter by default", function() {
++        it('doesn\'t filter by default', function () {
+             expect(chart.dimension().top(1000).length).toEqual(100);
+         });
+     });
+ 
+-    describe('default accessor functions', function() {
+-      it('exists for html()', function() {
+-        var html = chart.html();
+-        expect(typeof html).toBe("function");
+-      });
+-      it('exists for normalize()', function() {
+-        var normalize = chart.normalize();
+-        expect(typeof normalize).toBe("function");
+-      });
+-      it('exists for filterFunction()', function() {
+-        var filterFunction = chart.filterFunction();
+-        expect(typeof filterFunction).toBe("function");
+-      });
+-      it('exists for throttleDuration()', function() {
+-        var throttleDuration = chart.throttle();
+-        expect(typeof throttleDuration).toBe("number");
+-        expect(throttleDuration).toBe(200);
+-      });
++    describe('default accessor functions', function () {
++        it('exists for html()', function () {
++            var html = chart.html();
++            expect(typeof html).toBe('function');
++        });
++        it('exists for normalize()', function () {
++            var normalize = chart.normalize();
++            expect(typeof normalize).toBe('function');
++        });
++        it('exists for filterFunction()', function () {
++            var filterFunction = chart.filterFunction();
++            expect(typeof filterFunction).toBe('function');
++        });
++        it('exists for throttleDuration()', function () {
++            var throttleDuration = chart.throttleDuration();
++            expect(typeof throttleDuration).toBe('number');
++            expect(throttleDuration).toBe(200);
++        });
+     });
+ 
+-    describe('change the html search field', function() {
+-        it('generates something', function() {
++    describe('change the html search field', function () {
++        it('generates something', function () {
+             expect(chart).not.toBeNull();
+         });
+-        it('registers', function() {
++        it('registers', function () {
+             expect(dc.hasChart(chart)).toBeTruthy();
+         });
+-        it('sets an input field', function() {
+-            expect(chart.selectAll("input")[0].length).toEqual(1);
++        it('sets an input field', function () {
++            expect(chart.selectAll('input').nodes().length).toEqual(1);
+         });
+-        it("doesn't filter by default", function() {
++        it('doesn\'t filter by default', function () {
+             expect(chart.dimension().top(1000).length).toEqual(100);
+         });
+     });
+ 
+-    describe('filter when typing', function() {
++    describe('filter when typing', function () {
+         var mockTyping = function (q) {
+-          i=d3.select("input");
+-          i[0][0].value=q;
+-          i.on("input").call(i.node(),i.datum());
++            var i = d3.select('input');
++            i.nodes()[0].value = q;
++            i.on('input').call(i.node(), i.datum());
+         };
+ 
+-        beforeEach(function() {
++        beforeEach(function () {
+             chart.redraw();
+         });
+ 
+-        it("has a mock function that sets the value", function() {
+-          mockTyping("42");
+-          expect(chart.selectAll("input")[0][0].value),toEqual("42");
++        it('has a mock function that sets the value', function () {
++            mockTyping('42');
++            expect(chart.selectAll('input').nodes()[0].value).toEqual('42');
+         });
+ 
+-        it(' a letter that exists', function() {
+-            mockTyping("C");
+-            expect(chart.selectAll("input")[0].length).toEqual(1);
++        it('a letter that exists', function () {
++            mockTyping('C');
++            expect(chart.selectAll('input').nodes().length).toEqual(1);
+         });
+ 
+     });
+ 
+-
+-    afterEach(function() {
++    afterEach(function () {
+         dimension.filterAll();
+     });
+ });
+-
+-
+diff --git a/src/filter-input.js b/src/filter-input.js
+index 9d2fbe9d8..fbccf3b7a 100644
+--- a/src/filter-input.js
++++ b/src/filter-input.js
+@@ -1,83 +1,86 @@
+ /**
+-## input Filter Widget
+-Includes: [Base Mixin](#base-mixin)
+-
+-The input filter data widget is a simple widget designed to display an input field allowing to filter the data
+-that matches the text typed. 
+-
+-As opposed to the other graphs, this doesn't display any result and doesn't update its display, it's just to input an filter other graphs
+-
+-Examples:
+-
+-#### dc.inputFilter(parent[, chartGroup])
+-Create an input widget and attach it to the given parent element.
+-
+-Parameters:
+-
+-* parent : string | node | selection - any valid
+- [d3 single selector](https://github.com/mbostock/d3/wiki/Selections#selecting-elements) specifying
+- a dom block element such as a div; or a dom element or d3 selection.
+-* chartGroup : string (optional) - name of the chart group this widget should be placed in.
+-
+-Returns:
+-A newly created input widget instance
+-#### .dimension(data) - **mandatory**
+-
+-```js
+-var data=[{"firstname":"John","lastname":"Coltrane"}{"firstname":"Miles",lastname:"Davis"] 
+-var ndx = crossfilter(data);
+-var dimension = ndx.dimension(function(d) {
+-  return d.lastname.toLowerCase() + " "+ d.firstname.toLowerCase();
+-});
+-
+-dc.inputFilter('.search')
+-    .dimension(dimension);
+-    // you don't need the group() function
+-```
+-
+-**/
++ * input Filter Widget
++ *
++ * The input filter data widget is a simple widget designed to display an input field allowing to filter
++ * the data that matches the text typed.
++ * As opposed to the other graphs, this doesn't display any result and doesn't update its display,
++ * it's just to input an filter other graphs.
++ *
++ * @class inputFilter
++ * @memberof dc
++ * @mixes dc.baseMixin
++ * @example
++ *
++ * var data=[{"firstname":"John","lastname":"Coltrane"}{"firstname":"Miles",lastname:"Davis"]
++ * var ndx = crossfilter(data);
++ * var dimension = ndx.dimension(function(d) {
++ *     return d.lastname.toLowerCase() + " "+ d.firstname.toLowerCase();
++ * });
++ *
++ * dc.inputFilter('.search')
++ *     .dimension(dimension);
++ *     // you don't need the group() function
++ *
++ * @param {String|node|d3.selection|dc.compositeChart} parent - Any valid
++ * {@link https://github.com/d3/d3-selection/blob/master/README.md#select d3 single selector}
++ * specifying a dom block element such as a div; or a dom element or d3 selection.
++ * @param {String} [chartGroup] - The name of the chart group this chart instance should be placed in.
++ * Interaction with a chart will only trigger events and redraws within the chart's group.
++ * @returns {dc.inputFilter}
++ **/
+ 
+ dc.inputFilter = function (parent, chartGroup) {
+     var _chart = dc.baseMixin({});
+-    var _html = function() {return "<input class='form-control input-lg' placeholder='search'/>"};
+-    var _normalize = function (s) { return s.toLowerCase()};
+-    var _filterFunction = function(q) { 
+-      _chart.dimension().filterFunction(function (d){return d.indexOf (q) !== -1;});
++    var _html = function () {
++        return '<input class=\'form-control input-lg\' placeholder=\'search\'/>';
++    };
++    var _normalize = function (s) {
++        return s.toLowerCase();
++    };
++    var _filterFunction = function (q) {
++        _chart.dimension().filterFunction(function (d) {
++            return d.indexOf(q) !== -1;
++        });
+     };
+-    var _throttleDuration=200;
++    var _throttleDuration = 200;
+     var _throttleTimer;
+ 
+-    _chart.group(function (){throw "the group function on inputFilter should never be called, please report the issue"});
++    _chart.group(function () {
++        throw 'the group function on inputFilter should never be called, please report the issue';
++    });
+ 
+     _chart._doRender = function () {
+-      _chart.root().html(_html());
++        _chart.root().html(_html());
+ 
+-      _chart.root().selectAll("input").on("input", function() {
+-        _filterFunction(_normalize(this.value));
+-        _throttle();
+-      });
+-      return _chart;
++        _chart.root().selectAll('input').on('input', function () {
++            _filterFunction(_normalize(this.value));
++            _throttle();
++        });
++        return _chart;
+     };
+ 
+-    function _throttle() {
+-      window.clearTimeout(_throttleTimer);
+-      _throttleTimer = window.setTimeout(function() {
+-          dc.redrawAll();
+-      }, _throttleDuration);
++    function _throttle () {
++        window.clearTimeout(_throttleTimer);
++        _throttleTimer = window.setTimeout(function () {
++            dc.redrawAll();
++        }, _throttleDuration);
+     }
+ 
+     _chart._doRedraw = function () {
+-      return _chart;
++        return _chart;
+     };
+ 
+     _chart.html = function (s) {
+         if (!arguments.length) {
+             return _html;
+         }
+-        if (typeof s == "string")
+-          _html = function (){return s};
+-        else
+-          _html = s;
++        if (typeof s === 'string') {
++            _html = function () {
++                return s;
++            };
++        } else {
++            _html = s;
++        }
+         return _chart;
+     };
+ 
+
+From ae98e481f257e79b62810c9995042a52a4819b42 Mon Sep 17 00:00:00 2001
+From: deepak <deepak@kreatio.com>
+Date: Thu, 29 Mar 2018 12:58:56 +0530
+Subject: [PATCH 3/5] Tests passing
+
+---
+ spec/filter-input-spec.js | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/spec/filter-input-spec.js b/spec/filter-input-spec.js
+index 60020e1ab..5baa3f724 100644
+--- a/spec/filter-input-spec.js
++++ b/spec/filter-input-spec.js
+@@ -37,7 +37,7 @@ describe('dc.inputFilter', function () {
+             expect(chart.selectAll('input').nodes().length).toEqual(1);
+         });
+         it('doesn\'t filter by default', function () {
+-            expect(chart.dimension().top(1000).length).toEqual(100);
++            expect(chart.dimension().top(1000).length).toEqual(10);
+         });
+     });
+ 
+@@ -72,7 +72,7 @@ describe('dc.inputFilter', function () {
+             expect(chart.selectAll('input').nodes().length).toEqual(1);
+         });
+         it('doesn\'t filter by default', function () {
+-            expect(chart.dimension().top(1000).length).toEqual(100);
++            expect(chart.dimension().top(1000).length).toEqual(10);
+         });
+     });
+ 
+
+From a47728dd471cffe72dfadf5792e87cd01f719c24 Mon Sep 17 00:00:00 2001
+From: deepak <deepak@kreatio.com>
+Date: Thu, 29 Mar 2018 16:42:12 +0530
+Subject: [PATCH 4/5] Refactored
+
+---
+ spec/filter-input-spec.js |  46 ++++++------------
+ src/filter-input.js       | 121 +++++++++++++++++++++++++++++-----------------
+ web/examples/search.html  |  70 +++++++++++++++------------
+ 3 files changed, 132 insertions(+), 105 deletions(-)
+
+diff --git a/spec/filter-input-spec.js b/spec/filter-input-spec.js
+index 5baa3f724..612198601 100644
+--- a/spec/filter-input-spec.js
++++ b/spec/filter-input-spec.js
+@@ -9,7 +9,7 @@ describe('dc.inputFilter', function () {
+         dateFixture = loadDateFixture();
+         data = crossfilter(dateFixture);
+         dimension = data.dimension(function (d) {
+-            return d.countrycode.toLowerCase() + ' ' + d.state.toLowerCase();
++            return d.countrycode + ' ' + d.state;
+         });
+         group = dimension.group().reduceSum(function (d) {
+             return 1;
+@@ -42,37 +42,18 @@ describe('dc.inputFilter', function () {
+     });
+ 
+     describe('default accessor functions', function () {
+-        it('exists for html()', function () {
+-            var html = chart.html();
+-            expect(typeof html).toBe('function');
+-        });
+         it('exists for normalize()', function () {
+             var normalize = chart.normalize();
+             expect(typeof normalize).toBe('function');
+         });
+-        it('exists for filterFunction()', function () {
+-            var filterFunction = chart.filterFunction();
+-            expect(typeof filterFunction).toBe('function');
+-        });
+-        it('exists for throttleDuration()', function () {
+-            var throttleDuration = chart.throttleDuration();
+-            expect(typeof throttleDuration).toBe('number');
+-            expect(throttleDuration).toBe(200);
+-        });
+-    });
+-
+-    describe('change the html search field', function () {
+-        it('generates something', function () {
+-            expect(chart).not.toBeNull();
+-        });
+-        it('registers', function () {
+-            expect(dc.hasChart(chart)).toBeTruthy();
+-        });
+-        it('sets an input field', function () {
+-            expect(chart.selectAll('input').nodes().length).toEqual(1);
++        it('exists for filterFunctionFactory()', function () {
++            var filterFunctionFactory = chart.filterFunctionFactory();
++            expect(typeof filterFunctionFactory).toBe('function');
+         });
+-        it('doesn\'t filter by default', function () {
+-            expect(chart.dimension().top(1000).length).toEqual(10);
++        it('exists for placeHolder()', function () {
++            var placeHolder = chart.placeHolder();
++            expect(typeof placeHolder).toBe('string');
++            expect(placeHolder).toBe('search');
+         });
+     });
+ 
+@@ -92,9 +73,14 @@ describe('dc.inputFilter', function () {
+             expect(chart.selectAll('input').nodes()[0].value).toEqual('42');
+         });
+ 
+-        it('a letter that exists', function () {
+-            mockTyping('C');
+-            expect(chart.selectAll('input').nodes().length).toEqual(1);
++        it('filters the dimension', function () {
++            mockTyping('lifo'); // Will match California
++            expect(chart.dimension().top(1000).length).toEqual(3);
++        });
++
++        it('filters the dimension in case insensitive way', function () {
++            mockTyping('LiFo'); // Will match California
++            expect(chart.dimension().top(1000).length).toEqual(3);
+         });
+ 
+     });
+diff --git a/src/filter-input.js b/src/filter-input.js
+index fbccf3b7a..5a0c65be2 100644
+--- a/src/filter-input.js
++++ b/src/filter-input.js
+@@ -11,13 +11,13 @@
+  * @mixes dc.baseMixin
+  * @example
+  *
+- * var data=[{"firstname":"John","lastname":"Coltrane"}{"firstname":"Miles",lastname:"Davis"]
++ * var data = [{"firstname":"John","lastname":"Coltrane"}{"firstname":"Miles",lastname:"Davis"}]
+  * var ndx = crossfilter(data);
+  * var dimension = ndx.dimension(function(d) {
+- *     return d.lastname.toLowerCase() + " "+ d.firstname.toLowerCase();
++ *     return d.lastname.toLowerCase() + ' ' + d.firstname.toLowerCase();
+  * });
+  *
+- * dc.inputFilter('.search')
++ * dc.inputFilter('#search')
+  *     .dimension(dimension);
+  *     // you don't need the group() function
+  *
+@@ -30,81 +30,114 @@
+  **/
+ 
+ dc.inputFilter = function (parent, chartGroup) {
++    var INPUT_CSS_CLASS = 'dc-filter-input';
++
+     var _chart = dc.baseMixin({});
+-    var _html = function () {
+-        return '<input class=\'form-control input-lg\' placeholder=\'search\'/>';
+-    };
++
+     var _normalize = function (s) {
+         return s.toLowerCase();
+     };
+-    var _filterFunction = function (q) {
+-        _chart.dimension().filterFunction(function (d) {
+-            return d.indexOf(q) !== -1;
+-        });
++
++    var _filterFunctionFactory = function (query) {
++        query = _normalize(query);
++        return function (d) {
++            return _normalize(d).indexOf(query) !== -1;
++        };
+     };
+-    var _throttleDuration = 200;
+-    var _throttleTimer;
++
++    var _placeHolder = 'search';
+ 
+     _chart.group(function () {
+         throw 'the group function on inputFilter should never be called, please report the issue';
+     });
+ 
+     _chart._doRender = function () {
+-        _chart.root().html(_html());
++        _chart.select('input').remove();
+ 
+-        _chart.root().selectAll('input').on('input', function () {
+-            _filterFunction(_normalize(this.value));
+-            _throttle();
++        var _input = _chart.root().append('input')
++            .classed(INPUT_CSS_CLASS, true);
++
++        _input.on('input', function () {
++            _chart.dimension().filterFunction(_filterFunctionFactory(this.value));
++            dc.events.trigger(function () {
++                dc.redrawAll();
++            }, dc.constants.EVENT_DELAY);
+         });
+-        return _chart;
+-    };
+ 
+-    function _throttle () {
+-        window.clearTimeout(_throttleTimer);
+-        _throttleTimer = window.setTimeout(function () {
+-            dc.redrawAll();
+-        }, _throttleDuration);
+-    }
++        _chart._doRedraw();
+ 
+-    _chart._doRedraw = function () {
+         return _chart;
+     };
+ 
+-    _chart.html = function (s) {
+-        if (!arguments.length) {
+-            return _html;
+-        }
+-        if (typeof s === 'string') {
+-            _html = function () {
+-                return s;
+-            };
+-        } else {
+-            _html = s;
+-        }
++    _chart._doRedraw = function () {
++        _chart.root().selectAll('input')
++            .attr('placeholder', _placeHolder);
++
+         return _chart;
+     };
+ 
+-    _chart.normalize = function (s) {
++    /**
++     * This function will be called on values before calling the filter function.
++     * @name normalize
++     * @memberof dc.inputFilter
++     * @instance
++     * @example
++     * // This is the default
++     * chart.normalize(function (s) {
++     *   return s.toLowerCase();
++     * });
++     * @param {function} [normalize]
++     * @returns {dc.inputFilter|function}
++     **/
++    _chart.normalize = function (normalize) {
+         if (!arguments.length) {
+             return _normalize;
+         }
+-        _normalize = s;
++        _normalize = normalize;
+         return _chart;
+     };
+ 
+-    _chart.filterFunction = function (s) {
++    /**
++     * Placeholder text in the search box.
++     * @name placeHolder
++     * @memberof dc.inputFilter
++     * @instance
++     * @example
++     * // This is the default
++     * chart.placeHolder('type to filter');
++     * @param {function} [placeHolder='search']
++     * @returns {dc.inputFilter|string}
++     **/
++    _chart.placeHolder = function (placeHolder) {
+         if (!arguments.length) {
+-            return _filterFunction;
++            return _placeHolder;
+         }
+-        _filterFunction = s;
++        _placeHolder = placeHolder;
+         return _chart;
+     };
+ 
+-    _chart.throttleDuration = function (s) {
++    /**
++     * This function will be called with the search text, it needs to return a function that will be used to
++     * filter the data. The default function checks presence of the search text.
++     * @name filterFunctionFactory
++     * @memberof dc.inputFilter
++     * @instance
++     * @example
++     * // This is the default
++     * function (query) {
++     *     query = _normalize(query);
++     *     return function (d) {
++     *         return _normalize(d).indexOf(query) !== -1;
++     *     };
++     * };
++     * @param {function} [filterFunctionFactory]
++     * @returns {dc.inputFilter|function}
++     **/
++    _chart.filterFunctionFactory = function (filterFunctionFactory) {
+         if (!arguments.length) {
+-            return _throttleDuration;
++            return _filterFunctionFactory;
+         }
+-        _throttleDuration = s;
++        _filterFunctionFactory = filterFunctionFactory;
+         return _chart;
+     };
+ 
+diff --git a/web/examples/search.html b/web/examples/search.html
+index 451bcb6aa..3aa3b5059 100644
+--- a/web/examples/search.html
++++ b/web/examples/search.html
+@@ -28,41 +28,49 @@
+ <script type="text/javascript">
+ 
+ 
+-var data= [
+-{"first_name":"John","last_name":"Coltrane"},
+-{"first_name":"Miles","last_name":"Davis"},
+-{"first_name":"Ornette","last_name":"Coleman"},
+-{"first_name":"Louis","last_name":"Armstrong"},
+-{"first_name":"Fela","last_name":"Kuti"},
+-{"first_name":"Charlie","last_name":"Parker"},
+-{"first_name":"Wayne","last_name":"Shorter"},
+-{"first_name":"Thelonious","last_name":"Monk"},
+-{"first_name":"Herbie","last_name":"Hancock"},
+-{"first_name":"Max","last_name":"Roach"},
+-];
+-  var ndx = crossfilter(data),
+-    dimension  = ndx.dimension(function(d) {return d.last_name.toLowerCase() + " "+ d.first_name.toLowerCase();});
++    var data = [
++        {'first_name': 'John', 'last_name': 'Coltrane'},
++        {'first_name': 'Miles', 'last_name': 'Davis'},
++        {'first_name': 'Ornette', 'last_name': 'Coleman'},
++        {'first_name': 'Louis', 'last_name': 'Armstrong'},
++        {'first_name': 'Fela', 'last_name': 'Kuti'},
++        {'first_name': 'Charlie', 'last_name': 'Parker'},
++        {'first_name': 'Wayne', 'last_name': 'Shorter'},
++        {'first_name': 'Thelonious', 'last_name': 'Monk'},
++        {'first_name': 'Herbie', 'last_name': 'Hancock'},
++        {'first_name': 'Max', 'last_name': 'Roach'}
++    ];
+ 
+-  var chart = dc.inputFilter ("#search")
+-    .dimension(dimension)
+-    .html("<input placeholder='search a musician' />")
+-//    .group(function(d){console.log("never called")});
++    var ndx = crossfilter(data),
++        dimension = ndx.dimension(function (d) {
++            return d.last_name + ' ' + d.first_name;
++        });
+ 
+-   var i=0;
+-   dc.dataTable(".dc-data-grid")
+-     .dimension(dimension)
+-      .group(function (d) { return "Jazz";})
+-      .columns([
+-          function(d) { i=i+1; return i; },
+-          function(d) {  return d.first_name; },
+-          function(d) {  return d.last_name; }])
+-      .on("renderlet", function(c){
+-         i=0;
+-      });
++    var chart = dc.inputFilter("#search")
++        .dimension(dimension);
+ 
++    var i = 0;
++    dc.dataTable('.dc-data-grid')
++        .dimension(dimension)
++        .group(function (d) {
++            return 'Jazz';
++        })
++        .columns([
++            function (d) {
++                i = i + 1;
++                return i;
++            },
++            function (d) {
++                return d.first_name;
++            },
++            function (d) {
++                return d.last_name;
++            }])
++        .on('renderlet', function (c) {
++            i = 0;
++        });
+ 
+-  dc.renderAll();
+-
++    dc.renderAll();
+ 
+ </script>
+ 
+
+From 751af1e8520fff7fb8a527556ceb86813b7a5efe Mon Sep 17 00:00:00 2001
+From: deepak <deepak@kreatio.com>
+Date: Wed, 18 Apr 2018 15:10:30 +0530
+Subject: [PATCH 5/5] Rename inputFilter to textFilterWidget. Documentation
+ changes.
+
+---
+ Gruntfile.js                                       |  2 +-
+ ...er-input-spec.js => text-filter-widget-spec.js} |  4 +--
+ src/{filter-input.js => text-filter-widget.js}     | 38 +++++++++++-----------
+ .../{search.html => text-filter-widget.html}       |  3 +-
+ 4 files changed, 23 insertions(+), 24 deletions(-)
+ rename spec/{filter-input-spec.js => text-filter-widget-spec.js} (96%)
+ rename src/{filter-input.js => text-filter-widget.js} (78%)
+ rename web/examples/{search.html => text-filter-widget.html} (94%)
+
+diff --git a/Gruntfile.js b/Gruntfile.js
+index 747e28b48..cf56f0bbc 100644
+--- a/Gruntfile.js
++++ b/Gruntfile.js
+@@ -517,6 +517,6 @@ module.exports.jsFiles = [
+     'src/d3.box.js',
+     'src/box-plot.js',
+     'src/select-menu.js',
+-    'src/filter-input.js',
++    'src/text-filter-widget.js',
+     'src/footer.js'  // NOTE: keep this last
+ ];
+diff --git a/spec/filter-input-spec.js b/spec/text-filter-widget-spec.js
+similarity index 96%
+rename from spec/filter-input-spec.js
+rename to spec/text-filter-widget-spec.js
+index 612198601..7a6a84e0c 100644
+--- a/spec/filter-input-spec.js
++++ b/spec/text-filter-widget-spec.js
+@@ -1,5 +1,5 @@
+ /* global loadDateFixture, appendChartID */
+-describe('dc.inputFilter', function () {
++describe('dc.textFilterWidget', function () {
+     var dateFixture;
+     var id, chart, data;
+     var dimension, group;
+@@ -20,7 +20,7 @@ describe('dc.inputFilter', function () {
+ 
+         id = 'input-filter';
+         appendChartID(id);
+-        chart = dc.inputFilter('#' + id)
++        chart = dc.textFilterWidget('#' + id)
+             .dimension(dimension)
+             .group(group);
+         chart.render();
+diff --git a/src/filter-input.js b/src/text-filter-widget.js
+similarity index 78%
+rename from src/filter-input.js
+rename to src/text-filter-widget.js
+index 5a0c65be2..e1138e64f 100644
+--- a/src/filter-input.js
++++ b/src/text-filter-widget.js
+@@ -1,23 +1,23 @@
+ /**
+- * input Filter Widget
++ * Text Filter Widget
+  *
+- * The input filter data widget is a simple widget designed to display an input field allowing to filter
+- * the data that matches the text typed.
+- * As opposed to the other graphs, this doesn't display any result and doesn't update its display,
+- * it's just to input an filter other graphs.
++ * The text filter widget is a simple widget designed to display an input field allowing to filter
++ * data that matches the text typed.
++ * As opposed to the other charts, this doesn't display any result and doesn't update its display,
++ * it's just to input an filter other charts.
+  *
+- * @class inputFilter
++ * @class textFilterWidget
+  * @memberof dc
+  * @mixes dc.baseMixin
+  * @example
+  *
+- * var data = [{"firstname":"John","lastname":"Coltrane"}{"firstname":"Miles",lastname:"Davis"}]
++ * var data = [{"firstName":"John","lastName":"Coltrane"}{"firstName":"Miles",lastName:"Davis"}]
+  * var ndx = crossfilter(data);
+  * var dimension = ndx.dimension(function(d) {
+- *     return d.lastname.toLowerCase() + ' ' + d.firstname.toLowerCase();
++ *     return d.lastName.toLowerCase() + ' ' + d.firstName.toLowerCase();
+  * });
+  *
+- * dc.inputFilter('#search')
++ * dc.textFilterWidget('#search')
+  *     .dimension(dimension);
+  *     // you don't need the group() function
+  *
+@@ -26,11 +26,11 @@
+  * specifying a dom block element such as a div; or a dom element or d3 selection.
+  * @param {String} [chartGroup] - The name of the chart group this chart instance should be placed in.
+  * Interaction with a chart will only trigger events and redraws within the chart's group.
+- * @returns {dc.inputFilter}
++ * @returns {dc.textFilterWidget}
+  **/
+ 
+-dc.inputFilter = function (parent, chartGroup) {
+-    var INPUT_CSS_CLASS = 'dc-filter-input';
++dc.textFilterWidget = function (parent, chartGroup) {
++    var INPUT_CSS_CLASS = 'dc-text-filter-input';
+ 
+     var _chart = dc.baseMixin({});
+ 
+@@ -48,7 +48,7 @@ dc.inputFilter = function (parent, chartGroup) {
+     var _placeHolder = 'search';
+ 
+     _chart.group(function () {
+-        throw 'the group function on inputFilter should never be called, please report the issue';
++        throw 'the group function on textFilterWidget should never be called, please report the issue';
+     });
+ 
+     _chart._doRender = function () {
+@@ -79,7 +79,7 @@ dc.inputFilter = function (parent, chartGroup) {
+     /**
+      * This function will be called on values before calling the filter function.
+      * @name normalize
+-     * @memberof dc.inputFilter
++     * @memberof dc.textFilterWidget
+      * @instance
+      * @example
+      * // This is the default
+@@ -87,7 +87,7 @@ dc.inputFilter = function (parent, chartGroup) {
+      *   return s.toLowerCase();
+      * });
+      * @param {function} [normalize]
+-     * @returns {dc.inputFilter|function}
++     * @returns {dc.textFilterWidget|function}
+      **/
+     _chart.normalize = function (normalize) {
+         if (!arguments.length) {
+@@ -100,13 +100,13 @@ dc.inputFilter = function (parent, chartGroup) {
+     /**
+      * Placeholder text in the search box.
+      * @name placeHolder
+-     * @memberof dc.inputFilter
++     * @memberof dc.textFilterWidget
+      * @instance
+      * @example
+      * // This is the default
+      * chart.placeHolder('type to filter');
+      * @param {function} [placeHolder='search']
+-     * @returns {dc.inputFilter|string}
++     * @returns {dc.textFilterWidget|string}
+      **/
+     _chart.placeHolder = function (placeHolder) {
+         if (!arguments.length) {
+@@ -120,7 +120,7 @@ dc.inputFilter = function (parent, chartGroup) {
+      * This function will be called with the search text, it needs to return a function that will be used to
+      * filter the data. The default function checks presence of the search text.
+      * @name filterFunctionFactory
+-     * @memberof dc.inputFilter
++     * @memberof dc.textFilterWidget
+      * @instance
+      * @example
+      * // This is the default
+@@ -131,7 +131,7 @@ dc.inputFilter = function (parent, chartGroup) {
+      *     };
+      * };
+      * @param {function} [filterFunctionFactory]
+-     * @returns {dc.inputFilter|function}
++     * @returns {dc.textFilterWidget|function}
+      **/
+     _chart.filterFunctionFactory = function (filterFunctionFactory) {
+         if (!arguments.length) {
+diff --git a/web/examples/search.html b/web/examples/text-filter-widget.html
+similarity index 94%
+rename from web/examples/search.html
+rename to web/examples/text-filter-widget.html
+index 3aa3b5059..45eedd8a6 100644
+--- a/web/examples/search.html
++++ b/web/examples/text-filter-widget.html
+@@ -24,7 +24,6 @@
+ <script type="text/javascript" src="../js/d3.js"></script>
+ <script type="text/javascript" src="../js/crossfilter.js"></script>
+ <script type="text/javascript" src="../js/dc.js"></script>
+-<!--script type="text/javascript" src="../../src/filter-input.js"></script-->
+ <script type="text/javascript">
+ 
+ 
+@@ -46,7 +45,7 @@
+             return d.last_name + ' ' + d.first_name;
+         });
+ 
+-    var chart = dc.inputFilter("#search")
++    var chart = dc.textFilterWidget("#search")
+         .dimension(dimension);
+ 
+     var i = 0;
